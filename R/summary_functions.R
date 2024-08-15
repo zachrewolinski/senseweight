@@ -13,16 +13,27 @@ benchmark<-function(omit, weights, data, sigma2,
                     weighting_method='ebal', 
                     weight_max = Inf, estimand = "ATT"){
   data_benchmark = data %>% dplyr::select(-omit)
-  model_weights = WeightIt::weightit(missing~.-selection-outcome, data = data_benchmark, 
-                                method=weighting_method, estimand="ATT")
+  # check if treatment is a variable in data_benchmark, since it is only required for PATE
+  # TODO: WHY IS THE ESTIMAND="ATT" REGARDLESS OF WHAT THE ESTIMAND PASSED TO `benchmark` IS?
+  if("treatment" %in% colnames(data_benchmark)){
+    model_weights = WeightIt::weightit(missing~.-selection-treatment-outcome,
+                                       data = data_benchmark,
+                                       method=weighting_method, estimand="ATT")
+  } else {
+    model_weights = WeightIt::weightit(missing~.-selection-outcome,
+                                       data = data_benchmark, 
+                                       method=weighting_method, estimand="ATT")
+  }
+  
   weights_benchmark = model_weights$weights
-  # weights_benchmark <- weights(
-  #   survey::trimWeights(survey::svydesign(~1, data = data_benchmark, weights = weights_benchmark), 
-  #                                          upper = weight_max))
+  weights_benchmark <- weights(
+    survey::trimWeights(survey::svydesign(~1, data = data_benchmark, weights = weights_benchmark),
+                                           upper = weight_max))
   return(data.frame(variable=omit,
                     benchmark_parameters(weights[data$missing==0]/mean(weights[data$missing==0]),
                                          weights_benchmark[data$missing==0]/mean(weights_benchmark[data$missing==0]),
                                          data$outcome[data$missing==0],
+                                         Z=data$treatment[data$missing==0],
                                          sigma2, k_sigma=1, k_rho = 1, 
                                          estimand=estimand)))
 }
@@ -47,12 +58,17 @@ benchmark<-function(omit, weights, data, sigma2,
 #' @return data.frame containing the benchmarked parameter values, the estimated bias, MRCS, and minimum \code{k_sigma} and \code{k_rho} values for a killer confounder for the set of pre-specified covariates.
 #' @export 
 run_benchmarking<-function(weighting_vars, benchmark_vars = 'all', 
-                           data, outcome = Y, selection = S,
+                           data, treatment = Z, outcome = Y, selection = S,
                            weighting_method='ebal', weight_max = Inf,
                            estimate, RV, sigma2, estimand = "ATT"){
   names(data)[which(names(data) == paste(outcome))] = "outcome"
+  if (!is.null(treatment)) {
+    names(data)[which(names(data) == paste(treatment))] = "treatment"
+  }
   if(estimand == "ATT"){
-    stop("estimand not supported")
+    sigma2 = var(data$outcome[data$treatment==0])
+    data$missing = data$treatment 
+    data$selection = NA
   }
   if(estimand %in% c("PATE", "Survey")){
     names(data)[which(names(data) == paste(selection))] = "selection"
@@ -60,11 +76,21 @@ run_benchmarking<-function(weighting_vars, benchmark_vars = 'all',
       return("Error: Must specify bound for treatment effect heterogeneity.")
     }
     data$missing = 1-data$selection
-  } 
-  keep_covariates = append(c("outcome", "selection", "missing"), weighting_vars)
+  }
+  if("treatment" %in% colnames(data)){
+    keep_covariates = append(c("outcome", "treatment", "selection", "missing"), weighting_vars)
+  } else {
+    keep_covariates = append(c("outcome", "selection", "missing"), weighting_vars)
+  }
   data = data %>% dplyr::select(keep_covariates)
-  model_weights = WeightIt::weightit(missing~.-selection-outcome, data = data, 
-                                     method=weighting_method, estimand="ATT")
+  # TODO: WHY DOES ESTIMAND ALWAYS HAVE TO BE ATT FOR THIS INPUT?
+  if("treatment" %in% colnames(data)){
+    model_weights = WeightIt::weightit(missing~.-selection-treatment-outcome, 
+                                       data = data, method=weighting_method, estimand="ATT")
+  } else {
+    model_weights = WeightIt::weightit(missing~.-selection-outcome, data = data, 
+                                       method=weighting_method, estimand="ATT")
+  }
   weights = model_weights$weights 
   if(benchmark_vars == 'all'){
     benchmark_vars = weighting_vars
@@ -96,7 +122,7 @@ run_benchmarking<-function(weighting_vars, benchmark_vars = 'all',
 #' @param pretty If set to \code{TRUE}, will return a Kable table. If set to \code{FALSE}, will return a data.frame.
 #' @return Sensitivity summary
 #' @export
-summarize_sensitivity<-function(weights, Y, b_star = 0,
+summarize_sensitivity<-function(weights, Y, Z=NULL, b_star = 0,
                                 estimate = NULL, SE = NULL, unweighted=NULL, 
                                 sigma2=NULL, estimand="ATT", pretty=FALSE,
                                 dependent_var = NULL, model =  NULL, outcome_function = NULL, 
@@ -106,7 +132,7 @@ summarize_sensitivity<-function(weights, Y, b_star = 0,
       return(summarize_sensitivity_survey(dependent_var, model, outcome_function, svy_srs, Y, b_star))
     }else{
       sigma2 = var(Y)
-      RV = robustness_value(estimate, 0.5, sigma2, weights)
+      RV = robustness_value(estimate, b_star, sigma2, weights)
       df_summary = data.frame(Unweighted = round(unweighted, 2), 
                               Estimate = round(estimate,2), 
                               SE = round(SE,2), 
