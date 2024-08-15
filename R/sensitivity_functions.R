@@ -30,16 +30,12 @@ robustness_value<-function(estimate, b_star = 0, sigma2, weights){
 #' @return \code{data.frame} containing estimated parameter values for a confounder with specified relative confounder strength to an observed covariate (or set of covariates), as well as the estimated bias from such an omitted confounder. 
 #' @export
 benchmark_parameters<-function(weights, weights_benchmark, k_sigma = 1, k_rho = 1, 
-                               Y, Z, sigma2, estimand="ATT"){
+                               Y, sigma2, estimand="ATT"){
     #Estimate informal calibrated components
     eps_benchmark = weights_benchmark - weights
     R2 =  var(eps_benchmark)/var(weights)
     if(estimand == "PATE"){
-        cov_w_calib = cov(Y[Z==1], weights_benchmark[Z==1])-
-                      cov(Y[Z==0], weights_benchmark[Z==0])
-        cov_w = cov(Y[Z==1], weights[Z==1])-cov(Y[Z==0], weights[Z==0])
-        cov_benchmark = cov_w_calib - cov_w
-        rho = cov_benchmark/(sqrt(sigma2*var(eps_benchmark)))
+        stop("Only 'Survey' is supported in this version.")
     }else{
         if(!estimand %in% c("Augmented", "ATT", "Survey")){
             return("Invalid Estimand. Estimand must be ATT, PATE, or Survey.")
